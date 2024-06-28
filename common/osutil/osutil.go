@@ -20,8 +20,8 @@ func ConfigVpnServer(cidr string, gatewayIP net.IP, iface *water.Interface) {
 	if os == "linux" {
 		execCmd("/sbin/ip", "link", "set", "dev", iface.Name(), "mtu", "1500")
 		execCmd("/sbin/ip", "addr", "add", gatewayIP.String(), "dev", iface.Name())
-		execCmd("/sbin/ip", "route", "add", cidr, "dev", iface.Name())
 		execCmd("/sbin/ip", "link", "set", "dev", iface.Name(), "up")
+		execCmd("/sbin/ip", "route", "add", cidr, "dev", iface.Name())
 	} else if os == "darwin" {
 		minIp := ipNet.IP.To4()
 		minIp[3]++

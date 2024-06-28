@@ -56,20 +56,20 @@ func StartWebRTCClient(config config.Config) {
 	}
 	
 	ifaceChan := make(chan *water.Interface)
-	var iface **water.Interface
+	var iface *water.Interface
 	var dataChannel *webrtc.DataChannel
 	peerConnection.OnDataChannel(func(dc *webrtc.DataChannel) {
 		println("New data channel created: ", dc.Label())
 
 		if (dc.Label() == "data") {
 			dataChannel = dc
-			dc.OnMessage(newDataMessageHandler(*iface))
+			dc.OnMessage(newDataMessageHandler(&iface))
 		} else if (dc.Label() == "control") {
 			dc.OnMessage(newControlMessageHandler(ifaceChan))
 		}
 	})
 
-	*iface = <-ifaceChan
+	iface = <-ifaceChan
 
 	packet := make([]byte, 1500)
 	for {
@@ -126,15 +126,15 @@ func GenSDP(p *webrtc.PeerConnection, offer webrtc.SessionDescription) (string, 
 	return sdp, err
 }
 
-func newDataMessageHandler(iface *water.Interface) func(msg webrtc.DataChannelMessage) {
+func newDataMessageHandler(iface **water.Interface) func(msg webrtc.DataChannelMessage) {
 	return func(msg webrtc.DataChannelMessage) {
 		// relay packets
 		b := cipher.XOR(msg.Data)
 
 		println("incoming packet: ", len(b), "bytes")
 
-		if iface != nil {
-			iface.Write(b)
+		if (*iface) != nil {
+			(*iface).Write(b)
 		} else {
 			println("interface is not ready, discarding packet")
 		}
