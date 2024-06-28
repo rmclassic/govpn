@@ -1,8 +1,11 @@
 package client
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"math/big"
+	"strings"
 
 	"github.com/pchchv/govpn/common/cipher"
 	"github.com/pchchv/govpn/common/config"
@@ -57,12 +60,12 @@ func StartWebRTCClient(config config.Config) {
 	
 	ifaceChan := make(chan *water.Interface)
 	var iface *water.Interface
-	var dataChannel *webrtc.DataChannel
+	dataChannel := make([]*webrtc.DataChannel, 0)
 	peerConnection.OnDataChannel(func(dc *webrtc.DataChannel) {
 		println("New data channel created: ", dc.Label())
 
-		if (dc.Label() == "data") {
-			dataChannel = dc
+		if (strings.HasPrefix(dc.Label(), "data")) {
+			dataChannel = append(dataChannel, dc)
 			dc.OnMessage(newDataMessageHandler(&iface))
 		} else if (dc.Label() == "control") {
 			dc.OnMessage(newControlMessageHandler(ifaceChan))
@@ -78,14 +81,21 @@ func StartWebRTCClient(config config.Config) {
 			continue
 		}
 
-		if dataChannel == nil || dataChannel.ReadyState() != webrtc.DataChannelStateOpen {
+		var dc *webrtc.DataChannel
+		// select a channel from pool
+		if len(dataChannel) == 0 {
+			n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(dataChannel))))
+			dc = dataChannel[n.Int64()]
+		}
+
+		if dc == nil || dc.ReadyState() != webrtc.DataChannelStateOpen {
 			println("channel not ready yet, not relaying")
 			continue
 		}
 
 		println("relaying packet: ", len(packet[:n]), "bytes")
 		b := cipher.XOR(packet[:n])
-		err = dataChannel.Send(b)
+		err = dc.Send(b)
 		if err != nil {
 			println(err.Error())
 			continue

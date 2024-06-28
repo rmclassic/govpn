@@ -1,9 +1,11 @@
 package server
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 	"net"
 	"time"
 
@@ -27,7 +29,7 @@ type RTCForwarder struct {
 	peerConnection *webrtc.PeerConnection
 }
 
-func (f *RTCForwarder) forward(iface *water.Interface, channel *webrtc.DataChannel) {
+func (f *RTCForwarder) forward(iface *water.Interface, dataChannel []*webrtc.DataChannel) {
 	packet := make([]byte, 1500)
 
 	for {
@@ -37,6 +39,18 @@ func (f *RTCForwarder) forward(iface *water.Interface, channel *webrtc.DataChann
 		}
 		b := packet[:n]
 
+		var dc *webrtc.DataChannel
+		// select a channel from pool
+		if len(dataChannel) == 0 {
+			n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(dataChannel))))
+			dc = dataChannel[n.Int64()]
+		}
+
+		if dc == nil || dc.ReadyState() != webrtc.DataChannelStateOpen {
+			println("channel not ready yet, not relaying")
+			continue
+		}
+
 		srcAddr, dstAddr := netutil.GetAddr(b)
 		if waterutil.IsIPv4(b) && srcAddr != "" && dstAddr != "" {
 			fmt.Printf("relaying packet: %s -> %s: %d bytes\n", srcAddr, dstAddr, len(b))
@@ -45,7 +59,7 @@ func (f *RTCForwarder) forward(iface *water.Interface, channel *webrtc.DataChann
 		}
 
 		b = cipher.XOR(b)
-		channel.Send(b)
+		dc.Send(b)
 	}
 }
 
@@ -83,15 +97,37 @@ func StartWebRTCServer(ctx context.Context, config config.Config) {
 		}
 	})
 
+	dataChannels := make([]*webrtc.DataChannel, 0)
+
 	ordered := false
 	mplt := uint16(5000)
-	dataChannel, err := peerConnection.CreateDataChannel("data", &webrtc.DataChannelInit{
-		Ordered:           &ordered,
-		MaxPacketLifeTime: &mplt,
-	})
-	if err != nil {
-		panic(err)
+
+	for i := 0; i < config.DataChannels; i++ {
+		dataChannel, err := peerConnection.CreateDataChannel("data", &webrtc.DataChannelInit{
+			Ordered:           &ordered,
+			MaxPacketLifeTime: &mplt,
+		})
+		if err != nil {
+			panic(err)
+		}
+
+		dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
+			b := cipher.XOR(msg.Data)
+	
+			iface.Write(b)
+	
+			srcAddr, dstAddr := netutil.GetAddr(b)
+	
+			fmt.Printf("responding packet: %s -> %s: %d bytes\n", srcAddr, dstAddr, len(b))
+	
+			// if waterutil.IsIPv4(b) && srcAddr != "" && dstAddr != "" {
+			// 	key := fmt.Sprintf("%v->%v", srcAddr, dstAddr)
+			// 	forwarder.connCache.Set(key, "", cache.DefaultExpiration)
+			// }
+		})
 	}
+
+
 
 	controlChannel, err := peerConnection.CreateDataChannel("control", &webrtc.DataChannelInit{
 		Ordered:           &ordered,
@@ -111,7 +147,7 @@ func StartWebRTCServer(ctx context.Context, config config.Config) {
 	log.Printf("govpn webrtc server started on %v,CIDR is %v", config.LocalAddr, config.CIDR)
 
 	forwarder := &RTCForwarder{connCache: cache.New(30*time.Minute, 10*time.Minute), peerConnection: peerConnection}
-	go forwarder.forward(iface, dataChannel)
+	go forwarder.forward(iface, dataChannels)
 
 	sdp, err := sdputil.SDPPrompt()
 	if err != nil {
@@ -137,21 +173,6 @@ func StartWebRTCServer(ctx context.Context, config config.Config) {
 		err = controlChannel.Send(msgb)
 		if err != nil {
 			return
-		}
-	})
-
-	dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
-		b := cipher.XOR(msg.Data)
-
-		iface.Write(b)
-
-		srcAddr, dstAddr := netutil.GetAddr(b)
-
-		fmt.Printf("responding packet: %s -> %s: %d bytes\n", srcAddr, dstAddr, len(b))
-
-		if waterutil.IsIPv4(b) && srcAddr != "" && dstAddr != "" {
-			key := fmt.Sprintf("%v->%v", srcAddr, dstAddr)
-			forwarder.connCache.Set(key, "", cache.DefaultExpiration)
 		}
 	})
 

@@ -20,6 +20,7 @@ func main() {
 	flag.StringVar(&config.Key, "k", "6w9z$C&F)J@NcRfWjXn3r4u7x!A%D*G-", "encryption key")
 	flag.StringVar(&config.Protocol, "p", "wss", "protocol ws/wss/udp/rtc")
 	flag.BoolVar(&config.ServerMode, "S", false, "server mode")
+	flag.IntVar(&config.DataChannels, "d", 5, "data channel count for each connection")
 	flag.Parse()
 
 	config.Init()
