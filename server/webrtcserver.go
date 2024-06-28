@@ -42,9 +42,12 @@ func (f *RTCForwarder) forward(iface *water.Interface, dataChannel []*webrtc.Dat
 		var dc *webrtc.DataChannel
 		// select a channel from pool
 		if len(dataChannel) == 0 {
-			n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(dataChannel))))
-			dc = dataChannel[n.Int64()]
+			println("channel not ready yet, not relaying")
+			continue
 		}
+
+		index, _ := rand.Int(rand.Reader, big.NewInt(int64(len(dataChannel))))
+		dc = dataChannel[index.Int64()]
 
 		if dc == nil || dc.ReadyState() != webrtc.DataChannelStateOpen {
 			println("channel not ready yet, not relaying")
