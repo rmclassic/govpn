@@ -45,7 +45,7 @@ func ConfigVpnClient(cidr, ipAddr, gateway string, iface *water.Interface) {
 		execCmd("/sbin/ip", "addr", "add", ipAddr, "dev", iface.Name())
 		execCmd("/sbin/ip", "link", "set", "dev", iface.Name(), "up")
 		//execCmd("/sbin/ip", "route", "add", cidr, "dev", iface.Name())
-		execCmd("/sbin/ip", "route", "add", "default", "via", gateway)
+		//execCmd("/sbin/ip", "route", "add", "default", "via", gateway)
 	} else if os == "darwin" {
 		minIp := ipNet.IP.To4()
 		minIp[3]++
