@@ -2,12 +2,13 @@ package vpn
 
 import (
 	"log"
+	"net"
 
 	"github.com/pchchv/govpn/common/osutil"
 	"github.com/songgao/water"
 )
 
-func CreateServerVpn(cidr string) (iface *water.Interface) {
+func CreateServerVpn(cidr string, ip net.IP) (iface *water.Interface) {
 	c := water.Config{DeviceType: water.TAP}
 	iface, err := water.New(c)
 	if err != nil {
@@ -16,7 +17,7 @@ func CreateServerVpn(cidr string) (iface *water.Interface) {
 
 	log.Println("interface allocated:", iface.Name())
 
-	osutil.ConfigVpnServer(cidr, iface)
+	osutil.ConfigVpnServer(cidr, ip, iface)
 
 	return iface
 }

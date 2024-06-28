@@ -10,7 +10,7 @@ import (
 	"github.com/songgao/water"
 )
 
-func ConfigVpnServer(cidr string, iface *water.Interface) {
+func ConfigVpnServer(cidr string, gatewayIP net.IP, iface *water.Interface) {
 	os := runtime.GOOS
 	ip, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
@@ -19,7 +19,8 @@ func ConfigVpnServer(cidr string, iface *water.Interface) {
 
 	if os == "linux" {
 		execCmd("/sbin/ip", "link", "set", "dev", iface.Name(), "mtu", "1500")
-		execCmd("/sbin/ip", "addr", "add", cidr, "dev", iface.Name())
+		execCmd("/sbin/ip", "addr", "add", gatewayIP.String(), "dev", iface.Name())
+		execCmd("/sbin/ip", "route", "add", cidr, "dev", iface.Name())
 		execCmd("/sbin/ip", "link", "set", "dev", iface.Name(), "up")
 	} else if os == "darwin" {
 		minIp := ipNet.IP.To4()

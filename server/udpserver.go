@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/cilium/ipam/service/ipallocator"
 	"github.com/patrickmn/go-cache"
 	"github.com/pchchv/govpn/common/cipher"
 	"github.com/pchchv/govpn/common/config"
@@ -46,7 +47,19 @@ func (f *Forwarder) forward(iface *water.Interface, conn *net.UDPConn) {
 }
 
 func StartUDPServer(config config.Config) {
-	iface := vpn.CreateServerVpn(config.CIDR)
+	_, network, err := net.ParseCIDR(config.CIDR)
+	if err != nil {
+		panic(err)
+	}
+
+	ipAllocator, err := ipallocator.NewCIDRRange(network)
+	if err != nil {
+		panic(err)
+	}
+	gatewayIP, _ := ipAllocator.AllocateNext()
+
+	
+	iface := vpn.CreateServerVpn(config.CIDR, gatewayIP)
 	localAddr, err := net.ResolveUDPAddr("udp", config.LocalAddr)
 	if err != nil {
 		log.Fatalln("failed to get UDP socket:", err)

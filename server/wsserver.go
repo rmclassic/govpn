@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/cilium/ipam/service/ipallocator"
 	"github.com/gorilla/websocket"
 	"github.com/patrickmn/go-cache"
 	"github.com/pchchv/govpn/common/cipher"
@@ -29,7 +31,18 @@ var upgrader = websocket.Upgrader{
 }
 
 func StartWSServer(config config.Config) {
-	iface := vpn.CreateServerVpn(config.CIDR)
+	_, net, err := net.ParseCIDR(config.CIDR)
+	if err != nil {
+		panic(err)
+	}
+
+	ipAllocator, err := ipallocator.NewCIDRRange(net)
+	if err != nil {
+		panic(err)
+	}
+	gatewayIP, _ := ipAllocator.AllocateNext()
+
+	iface := vpn.CreateServerVpn(config.CIDR, gatewayIP)
 	c := cache.New(30*time.Minute, 10*time.Minute)
 
 	go vpnToWs(iface, c)

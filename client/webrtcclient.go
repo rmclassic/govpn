@@ -56,24 +56,24 @@ func StartWebRTCClient(config config.Config) {
 	}
 	
 	ifaceChan := make(chan *water.Interface)
-	var iface *water.Interface
+	var iface **water.Interface
 	var dataChannel *webrtc.DataChannel
 	peerConnection.OnDataChannel(func(dc *webrtc.DataChannel) {
 		println("New data channel created: ", dc.Label())
 
 		if (dc.Label() == "data") {
 			dataChannel = dc
-			dc.OnMessage(newDataMessageHandler(iface))
+			dc.OnMessage(newDataMessageHandler(*iface))
 		} else if (dc.Label() == "control") {
 			dc.OnMessage(newControlMessageHandler(ifaceChan))
 		}
 	})
 
-	iface = <-ifaceChan
+	*iface = <-ifaceChan
 
 	packet := make([]byte, 1500)
 	for {
-		n, err := iface.Read(packet)
+		n, err := (*iface).Read(packet)
 		if err != nil || n == 0 {
 			continue
 		}
@@ -135,6 +135,8 @@ func newDataMessageHandler(iface *water.Interface) func(msg webrtc.DataChannelMe
 
 		if iface != nil {
 			iface.Write(b)
+		} else {
+			println("interface is not ready, discarding packet")
 		}
 	}
 }

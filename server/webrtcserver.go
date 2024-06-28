@@ -40,6 +40,8 @@ func (f *RTCForwarder) forward(iface *water.Interface, channel *webrtc.DataChann
 		srcAddr, dstAddr := netutil.GetAddr(b)
 		if waterutil.IsIPv4(b) && srcAddr != "" && dstAddr != "" {
 			fmt.Printf("relaying packet: %s -> %s: %d bytes\n", srcAddr, dstAddr, len(b))
+		} else {
+			fmt.Printf("[non-IP] relaying packet: %d bytes\n", len(b))
 		}
 
 		b = cipher.XOR(b)
@@ -48,7 +50,18 @@ func (f *RTCForwarder) forward(iface *water.Interface, channel *webrtc.DataChann
 }
 
 func StartWebRTCServer(ctx context.Context, config config.Config) {
-	iface := vpn.CreateServerVpn(config.CIDR)
+	_, net, err := net.ParseCIDR(config.CIDR)
+	if err != nil {
+		panic(err)
+	}
+
+	ipAllocator, err := ipallocator.NewCIDRRange(net)
+	if err != nil {
+		panic(err)
+	}
+	gatewayIP, _ := ipAllocator.AllocateNext()
+
+	iface := vpn.CreateServerVpn(config.CIDR, gatewayIP)
 	rtcConfig := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
@@ -69,17 +82,6 @@ func StartWebRTCServer(ctx context.Context, config config.Config) {
 			panic("failed to connect")
 		}
 	})
-
-	_, net, err := net.ParseCIDR(config.CIDR)
-	if err != nil {
-		panic(err)
-	}
-
-	ipAllocator, err := ipallocator.NewCIDRRange(net)
-	if err != nil {
-		panic(err)
-	}
-	gatewayIP, _ := ipAllocator.AllocateNext()
 
 	ordered := false
 	mplt := uint16(5000)
