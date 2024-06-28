@@ -21,7 +21,7 @@ func CreateServerVpn(cidr string) (iface *water.Interface) {
 	return iface
 }
 
-func CreateClientVpn(cidr string) (iface *water.Interface) {
+func CreateClientVpn(cidr string, ip string, gateway string) (iface *water.Interface) {
 	c := water.Config{DeviceType: water.TAP}
 	iface, err := water.New(c)
 	if err != nil {
@@ -30,7 +30,7 @@ func CreateClientVpn(cidr string) (iface *water.Interface) {
 
 	log.Println("interface allocated:", iface.Name())
 
-	osutil.ConfigVpnClient(cidr, iface)
+	osutil.ConfigVpnClient(cidr, ip, gateway, iface)
 
 	return iface
 }

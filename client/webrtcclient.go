@@ -1,13 +1,16 @@
 package client
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/pchchv/govpn/common/cipher"
 	"github.com/pchchv/govpn/common/config"
+	"github.com/pchchv/govpn/common/control"
 	"github.com/pchchv/govpn/common/sdputil"
 	"github.com/pchchv/govpn/vpn"
 	"github.com/pion/webrtc/v3"
+	"github.com/songgao/water"
 )
 func createConnection() (*webrtc.PeerConnection, error) {
 	config := webrtc.Configuration{
@@ -52,21 +55,21 @@ func StartWebRTCClient(config config.Config) {
 		panic(err)
 	}
 	
-	iface := vpn.CreateClientVpn(config.CIDR)
-
-	var channel *webrtc.DataChannel
+	ifaceChan := make(chan *water.Interface)
+	var iface *water.Interface
+	var dataChannel *webrtc.DataChannel
 	peerConnection.OnDataChannel(func(dc *webrtc.DataChannel) {
 		println("New data channel created: ", dc.Label())
-		channel = dc
-		dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-			// relay packets
-			b := cipher.XOR(msg.Data)
 
-			println("incoming packet: ", len(b), "bytes")
-			iface.Write(b)
-		})
-
+		if (dc.Label() == "data") {
+			dataChannel = dc
+			dc.OnMessage(newDataMessageHandler(iface))
+		} else if (dc.Label() == "control") {
+			dc.OnMessage(newControlMessageHandler(ifaceChan))
+		}
 	})
+
+	iface = <-ifaceChan
 
 	packet := make([]byte, 1500)
 	for {
@@ -74,19 +77,15 @@ func StartWebRTCClient(config config.Config) {
 		if err != nil || n == 0 {
 			continue
 		}
-		// if !waterutil.IsIPv4(packet) {
-		// 	println("discarding, invalid packet")
-		// 	continue
-		// }
 
-		if channel == nil || channel.ReadyState() != webrtc.DataChannelStateOpen {
+		if dataChannel == nil || dataChannel.ReadyState() != webrtc.DataChannelStateOpen {
 			println("channel not ready yet, not relaying")
 			continue
 		}
 
-		println("relaying packet: ", len(packet), "bytes")
-		b := cipher.XOR(packet)
-		err = channel.Send(b)
+		println("relaying packet: ", len(packet[:n]), "bytes")
+		b := cipher.XOR(packet[:n])
+		err = dataChannel.Send(b)
 		if err != nil {
 			println(err.Error())
 			continue
@@ -125,4 +124,42 @@ func GenSDP(p *webrtc.PeerConnection, offer webrtc.SessionDescription) (string, 
 	//Encode the SDP to base64
 	sdp, err = cipher.Encode(p.LocalDescription())
 	return sdp, err
+}
+
+func newDataMessageHandler(iface *water.Interface) func(msg webrtc.DataChannelMessage) {
+	return func(msg webrtc.DataChannelMessage) {
+		// relay packets
+		b := cipher.XOR(msg.Data)
+
+		println("incoming packet: ", len(b), "bytes")
+
+		if iface != nil {
+			iface.Write(b)
+		}
+	}
+}
+
+func newControlMessageHandler(ifaceChan chan *water.Interface) func(msg webrtc.DataChannelMessage) {
+	return func(data webrtc.DataChannelMessage) {
+		fmt.Printf("received control-message\n")
+		var msg control.ControlMessage
+		err := json.Unmarshal(data.Data, &msg)
+		if err != nil {
+			return
+		}
+
+		switch msg.ID {
+			case control.MessageIDIPAllocation:
+				var ipmsg control.IPAllocationMessage
+				err := json.Unmarshal(data.Data, &ipmsg)
+				if err != nil {
+					return
+				}
+		
+				fmt.Printf("received ip allocation data, IP: %s Gateway: %s CIDR: %s\n", 
+				ipmsg.IPAddress, ipmsg.GatewayAddress, ipmsg.CIDR)
+				iface := vpn.CreateClientVpn(ipmsg.CIDR, ipmsg.IPAddress, ipmsg.GatewayAddress)
+				ifaceChan <- iface
+		}
+	}
 }

@@ -33,7 +33,7 @@ func ConfigVpnServer(cidr string, iface *water.Interface) {
 	}
 }
 
-func ConfigVpnClient(cidr string, iface *water.Interface) {
+func ConfigVpnClient(cidr, ipAddr, gateway string, iface *water.Interface) {
 	os := runtime.GOOS
 	ip, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
@@ -42,10 +42,10 @@ func ConfigVpnClient(cidr string, iface *water.Interface) {
 
 	if os == "linux" {
 		execCmd("/sbin/ip", "link", "set", "dev", iface.Name(), "mtu", "1500")
-		execCmd("/sbin/ip", "addr", "add", "172.16.0.2", "dev", iface.Name())
+		execCmd("/sbin/ip", "addr", "add", ipAddr, "dev", iface.Name())
 		execCmd("/sbin/ip", "link", "set", "dev", iface.Name(), "up")
-		execCmd("/sbin/ip", "route", "add", "172.16.0.0", "dev", iface.Name())
-		execCmd("/sbin/ip", "route", "add", "1.1.1.1", "dev", iface.Name())
+		//execCmd("/sbin/ip", "route", "add", cidr, "dev", iface.Name())
+		execCmd("/sbin/ip", "route", "add", "default", "via", gateway)
 	} else if os == "darwin" {
 		minIp := ipNet.IP.To4()
 		minIp[3]++

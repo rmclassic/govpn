@@ -5,6 +5,7 @@ go 1.20
 require github.com/songgao/water v0.0.0-20200317203138-2b4b6d7c09d8
 
 require (
+	github.com/cilium/ipam v0.0.0-20230509084518-fd66eae7909b // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/google/uuid v1.3.1 // indirect
 	github.com/pion/datachannel v1.5.5 // indirect

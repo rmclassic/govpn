@@ -1,3 +1,5 @@
+github.com/cilium/ipam v0.0.0-20230509084518-fd66eae7909b h1:yTDNdo6hd8ABJYeLUvmqKAYj3jaRzLYx3UwM+/jSeBY=
+github.com/cilium/ipam v0.0.0-20230509084518-fd66eae7909b/go.mod h1:Ascfar4FtgB+K+mwqbZpSb3WVZ5sPFIarg+iAOXNZqI=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

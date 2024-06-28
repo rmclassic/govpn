@@ -1,13 +1,17 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"time"
 
+	"github.com/cilium/ipam/service/ipallocator"
 	"github.com/patrickmn/go-cache"
 	"github.com/pchchv/govpn/common/cipher"
 	"github.com/pchchv/govpn/common/config"
+	"github.com/pchchv/govpn/common/control"
 	"github.com/pchchv/govpn/common/netutil"
 	"github.com/pchchv/govpn/common/sdputil"
 	"github.com/pchchv/govpn/vpn"
@@ -19,7 +23,7 @@ import (
 )
 
 type RTCForwarder struct {
-	connCache *cache.Cache
+	connCache      *cache.Cache
 	peerConnection *webrtc.PeerConnection
 }
 
@@ -37,7 +41,7 @@ func (f *RTCForwarder) forward(iface *water.Interface, channel *webrtc.DataChann
 		if waterutil.IsIPv4(b) && srcAddr != "" && dstAddr != "" {
 			fmt.Printf("relaying packet: %s -> %s: %d bytes\n", srcAddr, dstAddr, len(b))
 		}
-		
+
 		b = cipher.XOR(b)
 		channel.Send(b)
 	}
@@ -66,9 +70,28 @@ func StartWebRTCServer(ctx context.Context, config config.Config) {
 		}
 	})
 
-	ordered := true
+	_, net, err := net.ParseCIDR(config.CIDR)
+	if err != nil {
+		panic(err)
+	}
+
+	ipAllocator, err := ipallocator.NewCIDRRange(net)
+	if err != nil {
+		panic(err)
+	}
+	gatewayIP, _ := ipAllocator.AllocateNext()
+
+	ordered := false
 	mplt := uint16(5000)
-	channel, err := peerConnection.CreateDataChannel("control", &webrtc.DataChannelInit{
+	dataChannel, err := peerConnection.CreateDataChannel("data", &webrtc.DataChannelInit{
+		Ordered:           &ordered,
+		MaxPacketLifeTime: &mplt,
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	controlChannel, err := peerConnection.CreateDataChannel("control", &webrtc.DataChannelInit{
 		Ordered:           &ordered,
 		MaxPacketLifeTime: &mplt,
 	})
@@ -86,7 +109,7 @@ func StartWebRTCServer(ctx context.Context, config config.Config) {
 	log.Printf("govpn webrtc server started on %v,CIDR is %v", config.LocalAddr, config.CIDR)
 
 	forwarder := &RTCForwarder{connCache: cache.New(30*time.Minute, 10*time.Minute), peerConnection: peerConnection}
-	go forwarder.forward(iface, channel)
+	go forwarder.forward(iface, dataChannel)
 
 	sdp, err := sdputil.SDPPrompt()
 	if err != nil {
@@ -98,13 +121,29 @@ func StartWebRTCServer(ctx context.Context, config config.Config) {
 		println(err.Error())
 	}
 
-	channel.OnMessage(func(msg webrtc.DataChannelMessage) {
+	controlChannel.OnOpen(func() {
+		clientIP, _ := ipAllocator.AllocateNext()
+		msg := control.IPAllocationMessage{
+			ID:             control.MessageIDIPAllocation,
+			IPAddress:      clientIP.String(),
+			GatewayAddress: gatewayIP.String(),
+			CIDR:           config.CIDR,
+		}
+	
+		msgb, _ := json.Marshal(&msg)
+		println("sending ip allocation data to client")
+		err = controlChannel.Send(msgb)
+		if err != nil {
+			return
+		}
+	})
+
+	dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
 		b := cipher.XOR(msg.Data)
 
 		iface.Write(b)
 
 		srcAddr, dstAddr := netutil.GetAddr(b)
-		
 
 		fmt.Printf("responding packet: %s -> %s: %d bytes\n", srcAddr, dstAddr, len(b))
 
@@ -114,7 +153,7 @@ func StartWebRTCServer(ctx context.Context, config config.Config) {
 		}
 	})
 
-	<-ctx.Done()	
+	<-ctx.Done()
 }
 
 func GenOffer(p *webrtc.PeerConnection) (string, error) {
