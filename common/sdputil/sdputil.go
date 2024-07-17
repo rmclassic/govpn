@@ -42,3 +42,14 @@ func SDPPrompt() (webrtc.SessionDescription, error) {
 	}
 	return answer, nil
 }
+
+func SDPParse(sdp string) (webrtc.SessionDescription, error) {
+	//take remote SDP in answer
+	answer := webrtc.SessionDescription{}
+
+	if err := cipher.Decode(sdp, &answer); err != nil {
+		return webrtc.SessionDescription{}, err
+	}
+	
+	return answer, nil
+}

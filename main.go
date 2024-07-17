@@ -39,18 +39,20 @@ func main() {
 			client.StartWSClient(config)
 		}
 	case "rtc":
+		ctx, cancel := context.WithCancel(context.Background())
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt)
 		if config.ServerMode {
-			ctx, cancel := context.WithCancel(context.Background())
-			server.StartWebRTCServer(ctx, config)
-
-			c := make(chan os.Signal, 1)
-			signal.Notify(c, os.Interrupt)
-			<-c
-			cancel()
-			return
+			rtcServer := server.NewWebRTCServer(config)
+			rtcServer.Start(ctx)
 		} else {
-			client.StartWebRTCClient(config)
+			rtcClient := client.NewWebRTCClient(config)
+			rtcClient.Start(ctx)
 		}
+		
+		<-c
+		cancel()
+		return
 	default:
 	}
 }

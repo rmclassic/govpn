@@ -1,10 +1,12 @@
 package client
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net/http"
 	"strings"
 
 	"github.com/pchchv/govpn/common/cipher"
@@ -15,6 +17,20 @@ import (
 	"github.com/pion/webrtc/v3"
 	"github.com/songgao/water"
 )
+
+type WebRTCClient struct {
+	config         config.Config
+	dataChannels   []*webrtc.DataChannel
+	controlChannel *webrtc.DataChannel
+	iface          *water.Interface
+}
+
+func NewWebRTCClient(config config.Config) WebRTCClient {
+	return WebRTCClient{
+		config: config,
+	}
+}
+
 func createConnection() (*webrtc.PeerConnection, error) {
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
@@ -31,7 +47,7 @@ func createConnection() (*webrtc.PeerConnection, error) {
 	return peerConnection, nil
 }
 
-func StartWebRTCClient(config config.Config) {
+func (c *WebRTCClient) Start(ctx context.Context) {
 	peerConnection, err := createConnection()
 	if err != nil {
 		panic(err)
@@ -48,113 +64,117 @@ func StartWebRTCClient(config config.Config) {
 		}
 	})
 
-	answer, err := sdputil.SDPPrompt()
-	if err != nil {
-		panic(err)
-	}
-
-	err = PrintSDP(peerConnection, answer)
-	if err != nil {
-		panic(err)
-	}
-	
-	ifaceChan := make(chan *water.Interface)
-	var iface *water.Interface
-	dataChannel := make([]*webrtc.DataChannel, 0)
-	peerConnection.OnDataChannel(func(dc *webrtc.DataChannel) {
-		println("New data channel created: ", dc.Label())
-
-		if (strings.HasPrefix(dc.Label(), "data")) {
-			dataChannel = append(dataChannel, dc)
-			dc.OnMessage(newDataMessageHandler(&iface))
-		} else if (dc.Label() == "control") {
-			dc.OnMessage(newControlMessageHandler(ifaceChan))
-		}
+	ordered := false
+	mplt := uint16(5000)
+	c.controlChannel, err = peerConnection.CreateDataChannel("control", &webrtc.DataChannelInit{
+		Ordered:           &ordered,
+		MaxPacketLifeTime: &mplt,
 	})
+	if err != nil {
+		panic(err)
+	}
 
-	iface = <-ifaceChan
+	handlerCtx, _ := context.WithCancel(ctx)
+	c.controlChannel.OnMessage(c.handleControlMesssage(handlerCtx))
 
+	c.dataChannels = make([]*webrtc.DataChannel, 0)
+	for i := 0; i < c.config.DataChannels; i++ {
+		dataChannel, err := peerConnection.CreateDataChannel("data", &webrtc.DataChannelInit{
+			Ordered:           &ordered,
+			MaxPacketLifeTime: &mplt,
+		})
+		if err != nil {
+			panic(err)
+		}
+
+		c.dataChannels = append(c.dataChannels, dataChannel)
+	}
+
+	sdp, err := GenOffer(peerConnection)
+	if err != nil {
+		panic(err)
+	}
+
+	serverInfo, err := getVpnInfoFromServer("http://"+c.config.ServerAddr, sdp)
+	if err != nil {
+		panic(err)
+	}
+
+	answer, err := sdputil.SDPParse(serverInfo.Answer)
+	if err != nil {
+		panic(err)
+	}
+
+	peerConnection.SetRemoteDescription(answer)
+
+	<-ctx.Done()
+}
+
+func (c *WebRTCClient) forwardPackets(ctx context.Context) {
 	packet := make([]byte, 1500)
 	for {
-		n, err := (*iface).Read(packet)
-		if err != nil || n == 0 {
-			continue
-		}
+		select {
+		default:
+			n, err := c.iface.Read(packet)
+			if err != nil || n == 0 {
+				continue
+			}
 
-		var dc *webrtc.DataChannel
-		// select a channel from pool
-		if len(dataChannel) == 0 {
-			println("channel not ready yet, not relaying")
-			continue
-		}
+			var dc *webrtc.DataChannel
+			// select a channel from pool
+			if len(c.dataChannels) == 0 {
+				println("channel not ready yet, not relaying")
+				continue
+			}
 
-		index, _ := rand.Int(rand.Reader, big.NewInt(int64(len(dataChannel))))
-		dc = dataChannel[index.Int64()]
+			index, _ := rand.Int(rand.Reader, big.NewInt(int64(len(c.dataChannels))))
+			dc = c.dataChannels[index.Int64()]
 
-		if dc == nil || dc.ReadyState() != webrtc.DataChannelStateOpen {
-			println("channel not ready yet, not relaying")
-			continue
-		}
+			if dc == nil || dc.ReadyState() != webrtc.DataChannelStateOpen {
+				println("channel not ready yet, not relaying")
+				continue
+			}
 
-		println("relaying packet: ", len(packet[:n]), "bytes")
-		b := cipher.XOR(packet[:n])
-		err = dc.Send(b)
-		if err != nil {
-			println(err.Error())
-			continue
-		}
-	}
-}
-
-func PrintSDP(p *webrtc.PeerConnection, offer webrtc.SessionDescription) error {
-	sdp, err := GenSDP(p, offer)
-	if err != nil {
-		return err
-	}
-	fmt.Println(sdp)
-	return nil
-}
-
-func GenSDP(p *webrtc.PeerConnection, offer webrtc.SessionDescription) (string, error) {
-	var sdp string
-	err := p.SetRemoteDescription(offer)
-	if err != nil {
-		return sdp, err
-	}
-
-	answer, err := p.CreateAnswer(nil)
-	if err != nil {
-		return sdp, err
-	}
-
-	gatherDone := webrtc.GatheringCompletePromise(p)
-	err = p.SetLocalDescription(answer)
-	if err != nil {
-		return sdp, err
-	}
-	<-gatherDone
-
-	//Encode the SDP to base64
-	sdp, err = cipher.Encode(p.LocalDescription())
-	return sdp, err
-}
-
-func newDataMessageHandler(iface **water.Interface) func(msg webrtc.DataChannelMessage) {
-	return func(msg webrtc.DataChannelMessage) {
-		// relay packets
-		b := cipher.XOR(msg.Data)
-
-		println("incoming packet: ", len(b), "bytes")
-
-		if (*iface) != nil {
-			(*iface).Write(b)
-		} else {
-			println("interface is not ready, discarding packet")
+			println("relaying packet: ", len(packet[:n]), "bytes")
+			b := cipher.XOR(packet[:n])
+			err = dc.Send(b)
+			if err != nil {
+				println(err.Error())
+				continue
+			}
+		case <-ctx.Done():
+			return
 		}
 	}
 }
 
-func newControlMessageHandler(ifaceChan chan *water.Interface) func(msg webrtc.DataChannelMessage) {
+func GenOffer(p *webrtc.PeerConnection) (*webrtc.SessionDescription, error) {
+	offer, err := p.CreateOffer(nil)
+	if err != nil {
+		return nil, err
+	}
+	c := webrtc.GatheringCompletePromise(p)
+	err = p.SetLocalDescription(offer)
+	<-c
+	offer2 := p.LocalDescription()
+
+	if err != nil {
+		return nil, err
+	}
+
+	return offer2, err
+}
+
+func (c *WebRTCClient) handleDataMessage(msg webrtc.DataChannelMessage) {
+	// relay packets
+	b := cipher.XOR(msg.Data)
+
+	println("incoming packet: ", len(b), "bytes")
+
+	c.iface.Write(b)
+}
+
+func (c *WebRTCClient) handleControlMesssage(ctx context.Context) func(data webrtc.DataChannelMessage) {
 	return func(data webrtc.DataChannelMessage) {
 		fmt.Printf("received control-message\n")
 		var msg control.ControlMessage
@@ -164,17 +184,55 @@ func newControlMessageHandler(ifaceChan chan *water.Interface) func(msg webrtc.D
 		}
 
 		switch msg.ID {
-			case control.MessageIDIPAllocation:
-				var ipmsg control.IPAllocationMessage
-				err := json.Unmarshal(data.Data, &ipmsg)
-				if err != nil {
-					return
-				}
-		
-				fmt.Printf("received ip allocation data, IP: %s Gateway: %s CIDR: %s\n", 
+		case control.MessageIDIPAllocation:
+			var ipmsg control.IPAllocationMessage
+			err := json.Unmarshal(data.Data, &ipmsg)
+			if err != nil {
+				return
+			}
+
+			fmt.Printf("received ip allocation data, IP: %s Gateway: %s CIDR: %s\n",
 				ipmsg.IPAddress, ipmsg.GatewayAddress, ipmsg.CIDR)
-				iface := vpn.CreateClientVpn(ipmsg.CIDR, ipmsg.IPAddress, ipmsg.GatewayAddress)
-				ifaceChan <- iface
+			c.iface = vpn.CreateClientVpn(ipmsg.CIDR, ipmsg.IPAddress, ipmsg.GatewayAddress)
+
+			for _, channel := range c.dataChannels {
+				channel.OnMessage(c.handleDataMessage)
+			}
+
+			go c.forwardPackets(ctx)
 		}
 	}
+}
+
+type httpResp struct {
+	Answer    string   `json:"answer"`
+	GatewayIP string   `json:"gateway_ip"`
+	PublicIPs []string `json:"public_ips"`
+}
+
+type httpReq struct {
+	SDP string `json:"sdp"`
+}
+
+func getVpnInfoFromServer(url string, sdp *webrtc.SessionDescription) (httpResp, error) {
+	sdpStr, err := cipher.Encode(*sdp)
+	if err != nil {
+		return httpResp{}, err
+	}
+
+	req := httpReq{
+		SDP: sdpStr,
+	}
+
+	reqStr, _ := json.Marshal(&req)
+
+	r := strings.NewReader(string(reqStr))
+
+	resp, err := http.Post(url, "application/json", r)
+	if err != nil {
+		return httpResp{}, err
+	}
+
+	var data httpResp
+	return data, json.NewDecoder(resp.Body).Decode(&data)
 }
