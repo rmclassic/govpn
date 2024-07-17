@@ -104,6 +104,7 @@ func (f *rtcForwarder) handleICE(sdp string) (string, error) {
 			f.controlChannel.OnOpen(f.allocateIP)
 		default:
 			f.datachannels = append(f.datachannels, dc)
+			dc.OnMessage(f.handleDataMessage)
 		}
 	})
 
@@ -153,6 +154,15 @@ func (f *rtcForwarder) allocateIP() {
 	if err != nil {
 		return
 	}
+}
+
+func (f *rtcForwarder) handleDataMessage(msg webrtc.DataChannelMessage) {
+	// relay packets
+	b := cipher.XOR(msg.Data)
+
+	println("incoming packet: ", len(b), "bytes")
+
+	f.iface.Write(b)
 }
 
 func (f *rtcForwarder) forward() {
